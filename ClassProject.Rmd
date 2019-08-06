@@ -1,0 +1,271 @@
+---
+title: "PracticalMachineLearning Project"
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file, 
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+author: "Cathy Gao"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Background of Class Project
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+
+## Data Source and Documentation
+
+[Training Data (.csv file)] (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) 
+
+[Test Data (.csv file)] (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+[Data Resource (website)] (http://web.archive.org/web/20171005133040/http://groupware.les.inf.puc-rio.br/har)
+
+## Goal 
+
+The goal of your project is to predict the manner in which they did the exercise. 
+
+This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+
+## Project - Part I. Load Data
+
+There are two datasets: the train set and the test set which are directly downloadable online.  
+
+The train dataset has 19622 observations which is the dataset we use to build our prediction model. We will divide the train dataset into a training set and a test set in the analysis to assess the performance of the models before selecting the best model. 
+
+The test dataset has 20 observations to test our selected model, which will not be used until the end of the class project. 
+
+```{r}
+setwd("C:/Users/risin/PracticalMachineLearning") #getwd()
+rm(list=ls())
+
+URL<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+if (!file.exists("train.csv")) {
+    download.file(URL, "./train.csv")
+}
+
+if (!file.exists("test.csv")) {
+    download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile="./test.csv")
+}
+
+download.time<-Sys.time()
+
+training.Pre<-read.csv("./train.csv") # use na.strings argument to be interpreted as NAs
+prediction.set<-read.csv("./test.csv")
+
+dim(training.Pre); dim(prediction.set)
+```
+
+## Part II. Exploratory Analysis 
+
+The variable we try to predict "classe", the last variable in the train dataset, is a factor varible that has five levels. It has no missing values. 
+
+After looking at the structure of the train dataset, we see that the first 5 variables (which are X, user_names and timestamp) are unrelated in prediction. So, we do not include them in the final dataset.
+
+Then, we randomly split the dataset into training and testing sets. The typically picked proportion is 70% used for the training set and 30% for the testing set. 
+
+```{r}
+library(caret)
+
+str(training.Pre)
+
+summary(training.Pre$classe)
+
+training.Pre<-training.Pre[, 6:ncol(training.Pre)]
+
+set.seed(12345)
+
+inTrain<-createDataPartition(training.Pre$classe, p=0.7, list=FALSE)
+
+training<-training.Pre[inTrain, ]
+
+testing<-training.Pre[-inTrain, ]
+```
+
+### A. Missing Values
+
+Out of 160 variables in the training set, 62 variables have all NAs and the remaining 88 have no missing values. The case is clear cut and we will remove the variables that have no information for prediction. The number of predictors is now reduced to 88 variables in the training set. 
+
+```{r}
+table(colSums(is.na(training)))
+
+training<-training[, colSums(is.na(training))==0]
+```
+
+### B. Remove Near Zero Variance Predictors
+
+When a predictor has only one or few unique values relative to the number of observations in the dataset, it does not have enough variation to explain the outcome variable. When our purpose is to make accurate prediction, we can remove those variables from the dataset. The number of variables is now down to 54 which includes the outcome variable "classe".  
+
+```{r}
+nsv<-nearZeroVar(training, saveMetrics=TRUE)
+keep<-nsv$nzv==FALSE
+
+training<-training[, row.names(nsv)[keep]]
+```
+
+## Part III. Model Building
+
+We use k-fold cross validation to evaluate the performance of the chosen models. The choice of k is a tradeoff between bias and variance. Typically, k is set to be 5 or 10 since these values have been shown empirically to yield test error rate that is neither excessively biased nor highly varied. For faster running time, we pick k to be 5. 
+
+```{r}
+control<-trainControl(method="repeatedcv", number=5, repeats=3)
+metric<-"Accuracy"
+```
+
+### Model 1: Random Forest
+
+Our goal is to predict the outcome variable "classe". It has 5 levels. Classification trees method is a natural choice under such a nonlinear setting and it is shown to be highly accurate. The model yields an accuracy rate on the testing set 0.999 and it took 30 minutes to run on the computer. 
+
+```{r, cache=TRUE}
+set.seed(12345)
+Model_Fit<-train(classe~., data=training, method="rf", trControl=control, metric=metric)
+Model_Fit$finalModel
+modelrf<-confusionMatrix(testing$classe, predict(Model_Fit, testing))
+```
+
+### Model 2: Gradient Boosting 
+The final model of gbm algorithm has an accuracy rate of 0.986 on the testing set, which is still very high, but not as high as the random forest model. The time to run is shorter, about 15 minutes. 
+
+```{r, cache=TRUE}
+set.seed(12345)
+Model_alt_Fit<-train(classe~., data=training, method="gbm", trControl=control, metric=metric, verbose=FALSE)
+Model_alt_Fit$finalModel
+modelgbm<-confusionMatrix(testing$classe, predict(Model_alt_Fit, testing))
+```
+
+### Compare the Two Models
+
+We fit the two models with the same version of the training set. Through resampling the training set, we compare the predictive accuracy rates of the two algorithems. From the table with different quantiles of the estimates and the graph, it is very clear that the random forest model performs better in all aspects.  
+
+```{r}
+results<-resamples(list(rf=Model_Fit, gbm=Model_alt_Fit))
+summary(results)
+dotplot(results)
+```
+
+We examine the two methods on the testing set. The prediction tables and accuracy rates show the same thing: random forest provides more accurate results. 
+
+```{r}
+modelrf$table; modelgbm$table
+
+modelrf$overall[1:2]; modelgbm$overall[1:2]
+```
+
+### Stacking Models
+
+Given that the two models have very high accuracy rates, the combined model shall yield even better predictive power. We then stack the two models together. 
+
+First, we want to check the correlation between the two methods. A lower correlation is preferred since there is additional independent information in each of the models. The correlation is calculated at 0.428 which is well below 0.75 (the commonly recognized threshold of "a high correlation"). It implies that the two models caputures different variations from the same dataset. 
+
+```{r}
+modelCor(results)
+splom(results)
+```                   
+
+Then, we prepare and stack the two models together. The combined model does improve on the random forest method. However, the improvement is only marginal, from 0.999 to 0.9992 which is almost negligible. 
+
+We will use the combined model and the random forest model to predict the 20 cases in the test set. The difference is expected to be minimal. 
+
+```{r}
+pred_rf<-predict(Model_Fit, testing)
+pred_gbm<-predict(Model_alt_Fit, testing)
+
+predDF<-data.frame(pred_rf, pred_gbm, classe=testing$classe)
+
+set.seed(12345)
+combModFit<-train(classe~., method="rf", data=predDF, trControl=control, metric=metric)
+
+confusionMatrix(testing$classe, predict(combModFit, predDF))
+```
+
+## Part IV. Predict the test set (20 cases)
+
+As expected, the random forest model and the combined model offer the identical predictions on the 20 cases. 
+
+```{r}
+pred1<-predict(Model_Fit, prediction.set)
+
+pred2<-predict(Model_alt_Fit, prediction.set)
+
+predVDF<-data.frame(pred_rf=pred1, pred_gbm=pred2)
+combpred<-predict(combModFit, predVDF)
+
+#compare the prediction results of random forest and the stack model
+sum(predVDF$pred_rf %in% combpred)
+```
+
+## Appendix
+
+### PCA doesn't help with model accuracy 
+
+In order to predict the 20 cases correctly and assuming independence of the cases, the method shall have an accuracy rate of 0.995 so that the probability that all 20 cases are correct to be 90%. We are aiming at an accuracy rate of at least 0.99. 
+
+Given that we have 53 predictors after removing the near zero variance variables, we try to further reduce the predictor set to imrpove on machine time without much loss of accuracy. 
+
+We examine the correlation matrix of the remaining predictors. There are 15 pairs that are highly correlated out of the 1378 (53*52/2) pairs in total. It is not a significant proportion (only about 1%). We still decide to use the principal component analysis to reduce the number of predictors. The upside is the model run time will be reduced with a smaller number of variables that are as independent as possible. 
+
+```{r, eval=FALSE}
+M<-abs(cor(training[, -54]))
+diag(M)<-0
+highcorr<-which(M>0.8, arr.ind=TRUE)
+nrow(highcorr)
+```
+
+From PCA analysis, we find that 27 components are needed to capture 95% of the variance. The number of variables is further reduced from 53 to 27. The model building will be based on the PCA results. 
+
+```{r, eval=FALSE}
+preProc<-preProcess(training[, -54], method="pca") #can set argument "pcaComp=30"
+
+trainPC<-predict(preProc, training[, -54])
+
+testPC<-predict(preProc, testing[, -155]) #classe is the last vbl
+```
+
+Based on the 27 principal components, we run the random forest model. The accuracy of the final model is 0.977. It takes about 15 minutes to train the model. 
+
+When the number of PCA is increased to 30 (which captures 97.5% of the variation), the model accuracy doesn't improve much, 0.978 after retraining the model. 
+
+```{r, eval=FALSE}
+set.seed(12345)
+
+modFit<-train(x=trainPC, y=training$classe, method="rf", trControl=control, metric=metric)
+
+modFit$finalModel
+
+confusionMatrix(testing$classe, predict(modFit, testPC))
+```
+
+We try the gbm as well. The accuracy of the final model is 0.814. 
+
+```{r, eval=FALSE}
+sed.seed(12345)
+modFit_alt<-train(x=trainPC, y=training$classe, method="gbm", trControl=control, metric=metric, verbose=FALSE)
+
+modFit_alt$finalModel
+
+confusionMatrix(testing$classe, predict(modFit_alt, testPC))
+```
+
+### SVM Model 
+
+Here is the support vector machine method. It takes only 5 minutes to run the model and has an accuracy rate of 0.947 in the test set. It is inferior to the random forest and the gradient boosting methods. Hence, it is not used. 
+
+We need to make changes to the test set since the `svm` function requires the training and the testing set to be of the same structure. 
+
+```{r, eval=FALSE}
+set.seed(12345)
+
+library(e1071)
+
+testingsvm<-testing[, row.names(nsv)[keep]]
+dim(training); dim(testingsvm)
+
+svmfit<-svm(classe~., data=training)
+svmpred<-predict(svmfit, testing[, -54])
+
+confusionMatrix(testing$classe, svmpred)
+```
